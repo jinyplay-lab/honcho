@@ -1605,19 +1605,23 @@ def _parse_text_to_response_model(
             type(e).__name__,
         )
 
-    # Step 2: Try bullet-point parsing (for models that return plain text)
-    bullet_pattern = re.compile(r"^[\-\*]\s+(.+)$", re.MULTILINE)
+    # Step 2: Try bullet-point/numbered-list parsing (for models that return plain text)
+    # Matches: "- text", "* text", "1. text", "1) text", "1-text"
+    bullet_pattern = re.compile(
+        r"^(?:[-*]|\d+[.)])\s+(.+)$",
+        re.MULTILINE | re.DOTALL,
+    )
     bullets = bullet_pattern.findall(text)
 
     if bullets:
         logger.debug(
-            "_parse_text_to_response_model: found %d bullets, using bullet-point parsing",
+            "_parse_text_to_response_model: found %d bullets/numbered items, using text parsing",
             len(bullets),
         )
         # Check if model has 'explicit' field (PromptRepresentation pattern)
         model_fields = getattr(model_cls, "model_fields", {})
         if "explicit" in model_fields:
-            from src.schemas import ExplicitObservation
+            from src.utils.representation import ExplicitObservation
 
             observations = [
                 ExplicitObservation(observation=b.strip()) for b in bullets if b.strip()
