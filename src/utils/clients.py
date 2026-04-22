@@ -1989,33 +1989,37 @@ async def honcho_llm_call_inner(
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
-                try:
-                    response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                        **openai_params
-                    )
-                    # Extract the parsed object for structured output
-                    parsed_content = response.choices[0].message.parsed
-                    if parsed_content is None:
-                        raise ValueError("No parsed content in structured response")
+                # First get the raw response (without strict parsing)
+                raw_params = {k: v for k, v in openai_params.items() if k != "response_format"}
+                response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
+                    **raw_params
+                )
 
-                    usage = response.usage
-                    finish_reason = response.choices[0].finish_reason
+                raw_content = response.choices[0].message.content or ""
+                usage = response.usage
+                finish_reason = response.choices[0].finish_reason
 
-                    # Validate that parsed content matches the response model
-                    if not isinstance(parsed_content, response_model):
-                        raise ValueError(
-                            f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                # Try strict parsing first
+                parsed_content = None
+                if raw_content:
+                    try:
+                        # Re-apply response_format for strict parsing
+                        strict_params = {k: v for k, v in openai_params.items() if k != "response_format"}
+                        strict_params["response_format"] = response_model
+                        strict_response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
+                            **strict_params
                         )
-                except Exception:
-                    # Fallback: model didn't respect response_format, try
-                    # JSON repair on raw text content
-                    logger.warning(
-                        "response_model parsing failed, falling back to JSON repair"
-                    )
-                    raw_content = response.choices[0].message.content or ""
-                    usage = response.usage
-                    finish_reason = response.choices[0].finish_reason
+                        parsed_content = strict_response.choices[0].message.parsed
+                        if parsed_content is not None and isinstance(parsed_content, response_model):
+                            logger.debug("response_model parsing succeeded")
+                    except Exception as e:
+                        logger.warning(
+                            "response_model strict parsing failed (%s), falling back to JSON repair",
+                            type(e).__name__,
+                        )
 
+                # Fallback: JSON repair on raw text content
+                if parsed_content is None:
                     if not raw_content:
                         raise ValueError(
                             f"Empty response from {provider}/{model} "
@@ -2024,8 +2028,6 @@ async def honcho_llm_call_inner(
 
                     final = validate_and_repair_json(raw_content)
                     repaired_data = json.loads(final)
-
-                    # Convert dict to response_model instance
                     parsed_content = response_model(**repaired_data)
 
                 # Extract tool calls if present (though unlikely with structured output)
