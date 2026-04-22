@@ -1565,6 +1565,36 @@ async def honcho_llm_call(
     return result
 
 
+def _log_parsed_observations(model: M, model_cls: type[M]) -> None:
+    """
+    Log each extracted observation at INFO level for visibility.
+
+    Handles PromptRepresentation (explicit/deductive fields) and
+    any model with list-of-strings or list-of-objects fields.
+    """
+    model_fields = getattr(model_cls, "model_fields", {})
+    for field_name, field_info in model_fields.items():
+        field_value = getattr(model, field_name, None)
+        if field_value is None:
+            continue
+        if isinstance(field_value, list):
+            for i, item in enumerate(field_value):
+                if isinstance(item, BaseModel):
+                    content = getattr(item, "content", None) or str(item.model_dump())
+                elif isinstance(item, str):
+                    content = item
+                else:
+                    content = str(item)
+                logger.info(
+                    "  [%s] %s.%s[%d]: %s",
+                    field_name,
+                    model_cls.__name__,
+                    field_name,
+                    i,
+                    content[:500],  # truncate long observations
+                )
+
+
 def _parse_text_to_response_model(
     text: str, model_cls: type[M]
 ) -> M:
@@ -1597,7 +1627,9 @@ def _parse_text_to_response_model(
         final = validate_and_repair_json(text)
         repaired_data = json.loads(final)
         result = model_cls(**repaired_data)
-        logger.debug("_parse_text_to_response_model: JSON repair succeeded")
+        logger.info("_parse_text_to_response_model: JSON repair succeeded for %s", model_cls.__name__)
+        # Log each extracted observation
+        _log_parsed_observations(result, model_cls)
         return result
     except Exception as e:
         logger.debug(
@@ -1609,14 +1641,15 @@ def _parse_text_to_response_model(
     # Matches: "- text", "* text", "1. text", "1) text", "1-text"
     bullet_pattern = re.compile(
         r"^(?:[-*]|\d+[.)])\s+(.+)$",
-        re.MULTILINE | re.DOTALL,
+        re.MULTILINE,  # removed DOTALL to match line-by-line
     )
     bullets = bullet_pattern.findall(text)
 
     if bullets:
-        logger.debug(
-            "_parse_text_to_response_model: found %d bullets/numbered items, using text parsing",
+        logger.info(
+            "_parse_text_to_response_model: found %d bullets/numbered items, using text parsing for %s",
             len(bullets),
+            model_cls.__name__,
         )
         # Check if model has 'explicit' field (PromptRepresentation pattern)
         model_fields = getattr(model_cls, "model_fields", {})
@@ -1626,7 +1659,9 @@ def _parse_text_to_response_model(
             observations = [
                 ExplicitObservationBase(content=b.strip()) for b in bullets if b.strip()
             ]
-            return model_cls(explicit=observations)
+            result = model_cls(explicit=observations)
+            _log_parsed_observations(result, model_cls)
+            return result
 
     # Step 3: Both failed - raise exception to trigger retry
     logger.error(
@@ -2103,7 +2138,8 @@ async def honcho_llm_call_inner(
                         final = validate_and_repair_json(raw_content)
                         repaired_data = json.loads(final)
                         parsed_content = response_model(**repaired_data)
-                        logger.debug("response_model JSON repair succeeded")
+                        logger.info("response_model JSON repair succeeded for %s", response_model.__name__)
+                        _log_parsed_observations(parsed_content, response_model)
                     except Exception:
                         # Last resort: parse bullet-point text into response_model
                         logger.debug(
