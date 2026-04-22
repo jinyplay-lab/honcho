@@ -1717,8 +1717,9 @@ def _parse_text_for_tool_calls(
     """
     Parse tool calls from model text output (FastFlowLM fallback).
 
-    Supported format: [TOOL:name(args)]
-    where args is a JSON object.
+    Supports two formats:
+    1. JSON: [TOOL:name({"key": "value"})]
+    2. Keyword args: [TOOL:name(key="value", limit=5)]
 
     Returns:
         (tool_calls_list, remaining_text)
@@ -1739,13 +1740,7 @@ def _parse_text_for_tool_calls(
         if m and m.group(1) in tool_names:
             name = m.group(1)
             args_str = m.group(2)
-            try:
-                args = json.loads(args_str)
-            except json.JSONDecodeError:
-                args = {"_raw": args_str}
-
-            if not isinstance(args, dict):
-                args = {"_raw": str(args)}
+            args = _parse_tool_args(args_str)
 
             tool_calls.append({
                 "id": f"tc_{uuid.uuid4().hex[:12]}",
@@ -1757,6 +1752,38 @@ def _parse_text_for_tool_calls(
 
     remaining_text = "\n".join(remaining_lines).strip()
     return tool_calls, remaining_text
+
+
+def _parse_tool_args(args_str: str) -> dict[str, Any]:
+    """
+    Parse tool arguments from text.
+
+    Tries JSON first, then keyword args format (key="value", key2='value2').
+    Falls back to {"_raw": args_str} if both fail.
+    """
+    # Try JSON first
+    try:
+        args = json.loads(args_str)
+        if isinstance(args, dict):
+            return args
+    except json.JSONDecodeError:
+        pass
+
+    # Try keyword args: key="value", key2='value', key3=unquoted
+    kw_pattern = re.compile(
+        r"""(?:(\w+)\s*=\s*)?(?:(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([\S]+)))(?:\s*,\s*|$)""",
+    )
+    matches = kw_pattern.findall(args_str)
+    if matches:
+        args = {}
+        for key_or_empty, double_quoted, single_quoted, unquoted in matches:
+            key = key_or_empty if key_or_empty else "_arg"
+            value = double_quoted or single_quoted or unquoted
+            args[key] = value
+        if args:
+            return args
+
+    return {"_raw": args_str}
 
 
 @overload
