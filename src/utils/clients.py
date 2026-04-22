@@ -1621,10 +1621,10 @@ def _parse_text_to_response_model(
         # Check if model has 'explicit' field (PromptRepresentation pattern)
         model_fields = getattr(model_cls, "model_fields", {})
         if "explicit" in model_fields:
-            from src.utils.representation import ExplicitObservation
+            from src.utils.representation import ExplicitObservationBase
 
             observations = [
-                ExplicitObservation(observation=b.strip()) for b in bullets if b.strip()
+                ExplicitObservationBase(content=b.strip()) for b in bullets if b.strip()
             ]
             return model_cls(explicit=observations)
 
