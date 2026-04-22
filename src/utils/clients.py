@@ -1571,9 +1571,10 @@ def _parse_text_to_response_model(
     """
     Parse plain text output into a response_model instance.
 
-    Handles bullet-point format from models that ignore response_format:
-        - Observation 1
-        - Observation 2
+    Fallback chain:
+    1. JSON repair (for models that return JSON without response_format)
+    2. Bullet-point parsing (for models that return plain text)
+    3. Raise exception if both fail
 
     Args:
         text: Plain text output from the model
@@ -1591,13 +1592,26 @@ def _parse_text_to_response_model(
         text[:200] if text else "(empty)",
     )
 
-    # Extract bullet points (lines starting with - or *)
+    # Step 1: Try JSON repair first (for models that return JSON without response_format)
+    try:
+        final = validate_and_repair_json(text)
+        repaired_data = json.loads(final)
+        result = model_cls(**repaired_data)
+        logger.debug("_parse_text_to_response_model: JSON repair succeeded")
+        return result
+    except Exception as e:
+        logger.debug(
+            "_parse_text_to_response_model: JSON repair failed (%s), trying bullet-point parsing",
+            type(e).__name__,
+        )
+
+    # Step 2: Try bullet-point parsing (for models that return plain text)
     bullet_pattern = re.compile(r"^[\-\*]\s+(.+)$", re.MULTILINE)
     bullets = bullet_pattern.findall(text)
 
     if bullets:
         logger.debug(
-            "_parse_text_to_response_model: found %d bullets",
+            "_parse_text_to_response_model: found %d bullets, using bullet-point parsing",
             len(bullets),
         )
         # Check if model has 'explicit' field (PromptRepresentation pattern)
@@ -1610,18 +1624,14 @@ def _parse_text_to_response_model(
             ]
             return model_cls(explicit=observations)
 
-    # Fallback: try JSON repair (for models that return JSON without response_format)
-    try:
-        final = validate_and_repair_json(text)
-        repaired_data = json.loads(final)
-        return model_cls(**repaired_data)
-    except Exception as e:
-        logger.error(
-            "_parse_text_to_response_model: JSON repair failed (%s), text=%s",
-            type(e).__name__,
-            text[:200],
-        )
-        raise
+    # Step 3: Both failed - raise exception to trigger retry
+    logger.error(
+        "_parse_text_to_response_model: all parsing methods failed, text=%s",
+        text[:200],
+    )
+    raise ValueError(
+        f"Could not parse {model_cls.__name__} from text: {text[:200]}"
+    )
 
 
 @overload
