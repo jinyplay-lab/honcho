@@ -550,13 +550,25 @@ Create inductive observations when you see patterns:
 
 But follow the evidence - if you find patterns elsewhere, pursue those.
 
-Start with `get_recent_observations`."""
+Start with `get_recent_observations`.
+
+## TOOL CALL FORMAT
+When you need to use a tool, output each tool call on its own line:
+  [TOOL:tool_name({{"arg1": "value1", "arg2": "value2"}})]
+When you have all information needed, provide your final answer directly.
+Do NOT mix tool calls and final answer in the same response."""
 
         return f"""{peer_card_context}Explore the observation space and identify patterns.
 
 Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
 
-Go."""
+Go.
+
+## TOOL CALL FORMAT
+When you need to use a tool, output each tool call on its own line:
+  [TOOL:tool_name({{"arg1": "value1", "arg2": "value2"}})]
+When you have all information needed, provide your final answer directly.
+Do NOT mix tool calls and final answer in the same response."""
 
 
 # Singleton instances

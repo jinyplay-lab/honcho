@@ -40,10 +40,17 @@ RULES:
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
+OUTPUT FORMAT:
+- Output each observation as a bullet point starting with "- "
+- One observation per line
+- Do NOT include any introductory text, explanations, or numbering
+- Do NOT wrap in JSON or code blocks
+
 EXAMPLES:
-- EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
-- EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
+- EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old"
+  "{peer_id}'s birthday is June 21st"
+- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog"
+  "{peer_id} lives in NYC"
 
 Messages to analyze:
 <messages>

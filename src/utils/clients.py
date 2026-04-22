@@ -788,6 +788,22 @@ async def _execute_tool_loop(
         total_cache_read_tokens += response.cache_read_input_tokens
 
         # Check if there are tool calls
+        if not response.tool_calls_made and tools:
+            # Fallback: try parsing tool calls from text (FastFlowLM)
+            parsed_calls, remaining_text = _parse_text_for_tool_calls(
+                response.content or "", tools
+            )
+            if parsed_calls:
+                logger.info(
+                    "Parsed %d tool call(s) from text response "
+                    "(provider=%s)",
+                    len(parsed_calls),
+                    current_provider,
+                )
+                response.content = remaining_text if remaining_text else ""
+                response.tool_calls_made = parsed_calls
+            # else: fall through to normal exit below
+
         if not response.tool_calls_made:
             # No tool calls, return final response
             logger.debug("No tool calls in response, finishing")
@@ -1663,7 +1679,28 @@ def _parse_text_to_response_model(
             _log_parsed_observations(result, model_cls)
             return result
 
-    # Step 3: Both failed - raise exception to trigger retry
+    # Step 2b: Plain-text line splitting (for models that output one observation per line)
+    # Models may ignore bullet format instructions and output plain lines instead.
+    # Each non-empty line is treated as a separate observation.
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines:
+        logger.info(
+            "_parse_text_to_response_model: plain-text fallback, found %d lines for %s",
+            len(lines),
+            model_cls.__name__,
+        )
+        model_fields = getattr(model_cls, "model_fields", {})
+        if "explicit" in model_fields:
+            from src.utils.representation import ExplicitObservationBase
+
+            observations = [
+                ExplicitObservationBase(content=line) for line in lines
+            ]
+            result = model_cls(explicit=observations)
+            _log_parsed_observations(result, model_cls)
+            return result
+
+    # Step 3: All methods failed - raise exception to trigger retry
     logger.error(
         "_parse_text_to_response_model: all parsing methods failed, text=%s",
         text[:200],
@@ -1671,6 +1708,55 @@ def _parse_text_to_response_model(
     raise ValueError(
         f"Could not parse {model_cls.__name__} from text: {text[:200]}"
     )
+
+
+def _parse_text_for_tool_calls(
+    text: str,
+    available_tools: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    """
+    Parse tool calls from model text output (FastFlowLM fallback).
+
+    Supported format: [TOOL:name(args)]
+    where args is a JSON object.
+
+    Returns:
+        (tool_calls_list, remaining_text)
+        tool_calls_list: [{"id", "name", "input"}]
+        remaining_text: text after removing tool call lines (final answer)
+    """
+    import uuid
+
+    tool_names = {t["name"] for t in available_tools}
+    tool_calls = []
+    remaining_lines = []
+
+    # Match: [TOOL:name(args)]
+    tool_pattern = re.compile(r"^\s*\[TOOL:(\w+)\((.+)\)\]\s*$")
+
+    for line in text.split("\n"):
+        m = tool_pattern.match(line)
+        if m and m.group(1) in tool_names:
+            name = m.group(1)
+            args_str = m.group(2)
+            try:
+                args = json.loads(args_str)
+            except json.JSONDecodeError:
+                args = {"_raw": args_str}
+
+            if not isinstance(args, dict):
+                args = {"_raw": str(args)}
+
+            tool_calls.append({
+                "id": f"tc_{uuid.uuid4().hex[:12]}",
+                "name": name,
+                "input": args,
+            })
+        else:
+            remaining_lines.append(line)
+
+    remaining_text = "\n".join(remaining_lines).strip()
+    return tool_calls, remaining_text
 
 
 @overload
