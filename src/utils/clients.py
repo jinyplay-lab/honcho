@@ -1584,14 +1584,22 @@ def _parse_text_to_response_model(
     """
     import re
 
+    logger.debug(
+        "_parse_text_to_response_model: text=%s, model=%s, text_preview=%s",
+        len(text),
+        model_cls.__name__,
+        text[:200] if text else "(empty)",
+    )
+
     # Extract bullet points (lines starting with - or *)
     bullet_pattern = re.compile(r"^[\-\*]\s+(.+)$", re.MULTILINE)
     bullets = bullet_pattern.findall(text)
 
     if bullets:
-        # Model returned bullet points - map to explicit observations
-        from pydantic import create_model
-
+        logger.debug(
+            "_parse_text_to_response_model: found %d bullets",
+            len(bullets),
+        )
         # Check if model has 'explicit' field (PromptRepresentation pattern)
         model_fields = getattr(model_cls, "model_fields", {})
         if "explicit" in model_fields:
@@ -1602,10 +1610,18 @@ def _parse_text_to_response_model(
             ]
             return model_cls(explicit=observations)
 
-    # Fallback: try JSON repair
-    final = validate_and_repair_json(text)
-    repaired_data = json.loads(final)
-    return model_cls(**repaired_data)
+    # Fallback: try JSON repair (for models that return JSON without response_format)
+    try:
+        final = validate_and_repair_json(text)
+        repaired_data = json.loads(final)
+        return model_cls(**repaired_data)
+    except Exception as e:
+        logger.error(
+            "_parse_text_to_response_model: JSON repair failed (%s), text=%s",
+            type(e).__name__,
+            text[:200],
+        )
+        raise
 
 
 @overload
