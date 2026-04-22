@@ -595,10 +595,10 @@ class VectorStoreSettings(HonchoSettings):
     DIMENSIONS: Annotated[
         int,
         Field(
-            default=1536,
+            default=768,
             gt=0,
         ),
-    ] = 1536
+    ] = 768
 
     # Turbopuffer-specific settings
     TURBOPUFFER_API_KEY: str | None = None

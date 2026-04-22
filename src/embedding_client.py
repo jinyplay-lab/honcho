@@ -99,7 +99,7 @@ class _EmbeddingClient:
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": 768},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
@@ -133,7 +133,7 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": 768},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
@@ -176,7 +176,7 @@ class _EmbeddingClient:
             embedding = None
 
         if isinstance(embedding, list):
-            embedding = embedding[:1536]
+            embedding = embedding[:768]
         else:
             print(f"🔴 解析失败！原始数据类型: {type(data)}, 内容: {data}")
             raise ValueError("No embedding returned from local embedding server")
@@ -205,7 +205,7 @@ class _EmbeddingClient:
                     embedding = None
 
                 if isinstance(embedding, list):
-                    embedding = embedding[:1536]
+                    embedding = embedding[:768]
                 else:
                     print(f"🔴 批量解析失败!原始数据类型: {type(data)}, 内容: {data}")
                     raise ValueError("No embeddings returned from local embedding server")
@@ -333,7 +333,7 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": 768},
                     )
                     if response.embeddings:
                         for item, embedding in zip(
