@@ -1989,22 +1989,44 @@ async def honcho_llm_call_inner(
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
-                response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                    **openai_params
-                )
-                # Extract the parsed object for structured output
-                parsed_content = response.choices[0].message.parsed
-                if parsed_content is None:
-                    raise ValueError("No parsed content in structured response")
-
-                usage = response.usage
-                finish_reason = response.choices[0].finish_reason
-
-                # Validate that parsed content matches the response model
-                if not isinstance(parsed_content, response_model):
-                    raise ValueError(
-                        f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                try:
+                    response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
+                        **openai_params
                     )
+                    # Extract the parsed object for structured output
+                    parsed_content = response.choices[0].message.parsed
+                    if parsed_content is None:
+                        raise ValueError("No parsed content in structured response")
+
+                    usage = response.usage
+                    finish_reason = response.choices[0].finish_reason
+
+                    # Validate that parsed content matches the response model
+                    if not isinstance(parsed_content, response_model):
+                        raise ValueError(
+                            f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                        )
+                except Exception:
+                    # Fallback: model didn't respect response_format, try
+                    # JSON repair on raw text content
+                    logger.warning(
+                        "response_model parsing failed, falling back to JSON repair"
+                    )
+                    raw_content = response.choices[0].message.content or ""
+                    usage = response.usage
+                    finish_reason = response.choices[0].finish_reason
+
+                    if not raw_content:
+                        raise ValueError(
+                            f"Empty response from {provider}/{model} "
+                            f"(finish_reason={finish_reason})"
+                        ) from None
+
+                    final = validate_and_repair_json(raw_content)
+                    repaired_data = json.loads(final)
+
+                    # Convert dict to response_model instance
+                    parsed_content = response_model(**repaired_data)
 
                 # Extract tool calls if present (though unlikely with structured output)
                 parsed_tool_calls: list[dict[str, Any]] = []
