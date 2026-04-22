@@ -5,7 +5,7 @@ The actual 1536→768 dimension change was applied manually this morning
 and is reflected in the current codebase.
 
 Revision ID: a2b3c4d5e6f7
-Revises: 119a52b73c60
+Revises: e4eba9cfaa6f
 Create Date: 2026-04-22 09:00:00.000000
 """
 
