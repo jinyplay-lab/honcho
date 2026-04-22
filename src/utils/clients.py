@@ -1565,6 +1565,49 @@ async def honcho_llm_call(
     return result
 
 
+def _parse_text_to_response_model(
+    text: str, model_cls: type[M]
+) -> M:
+    """
+    Parse plain text output into a response_model instance.
+
+    Handles bullet-point format from models that ignore response_format:
+        - Observation 1
+        - Observation 2
+
+    Args:
+        text: Plain text output from the model
+        model_cls: Pydantic model class (e.g., PromptRepresentation)
+
+    Returns:
+        Parsed model instance
+    """
+    import re
+
+    # Extract bullet points (lines starting with - or *)
+    bullet_pattern = re.compile(r"^[\-\*]\s+(.+)$", re.MULTILINE)
+    bullets = bullet_pattern.findall(text)
+
+    if bullets:
+        # Model returned bullet points - map to explicit observations
+        from pydantic import create_model
+
+        # Check if model has 'explicit' field (PromptRepresentation pattern)
+        model_fields = getattr(model_cls, "model_fields", {})
+        if "explicit" in model_fields:
+            from src.schemas import ExplicitObservation
+
+            observations = [
+                ExplicitObservation(observation=b.strip()) for b in bullets if b.strip()
+            ]
+            return model_cls(explicit=observations)
+
+    # Fallback: try JSON repair
+    final = validate_and_repair_json(text)
+    repaired_data = json.loads(final)
+    return model_cls(**repaired_data)
+
+
 @overload
 async def honcho_llm_call_inner(
     provider: SupportedProviders,
@@ -1999,11 +2042,10 @@ async def honcho_llm_call_inner(
                 usage = response.usage
                 finish_reason = response.choices[0].finish_reason
 
-                # Try strict parsing first
+                # Try strict parsing first (some models respect response_format)
                 parsed_content = None
                 if raw_content:
                     try:
-                        # Re-apply response_format for strict parsing
                         strict_params = {k: v for k, v in openai_params.items() if k != "response_format"}
                         strict_params["response_format"] = response_model
                         strict_response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
@@ -2011,14 +2053,14 @@ async def honcho_llm_call_inner(
                         )
                         parsed_content = strict_response.choices[0].message.parsed
                         if parsed_content is not None and isinstance(parsed_content, response_model):
-                            logger.debug("response_model parsing succeeded")
+                            logger.debug("response_model strict parsing succeeded")
                     except Exception as e:
                         logger.warning(
-                            "response_model strict parsing failed (%s), falling back to JSON repair",
+                            "response_model strict parsing failed (%s), falling back to text parsing",
                             type(e).__name__,
                         )
 
-                # Fallback: JSON repair on raw text content
+                # Fallback: parse plain text output
                 if parsed_content is None:
                     if not raw_content:
                         raise ValueError(
@@ -2026,9 +2068,20 @@ async def honcho_llm_call_inner(
                             f"(finish_reason={finish_reason})"
                         ) from None
 
-                    final = validate_and_repair_json(raw_content)
-                    repaired_data = json.loads(final)
-                    parsed_content = response_model(**repaired_data)
+                    # Try JSON repair first (for models that return JSON)
+                    try:
+                        final = validate_and_repair_json(raw_content)
+                        repaired_data = json.loads(final)
+                        parsed_content = response_model(**repaired_data)
+                        logger.debug("response_model JSON repair succeeded")
+                    except Exception:
+                        # Last resort: parse bullet-point text into response_model
+                        logger.debug(
+                            "Text parsing fallback for %s", response_model.__name__
+                        )
+                        parsed_content = _parse_text_to_response_model(
+                            raw_content, response_model
+                        )
 
                 # Extract tool calls if present (though unlikely with structured output)
                 parsed_tool_calls: list[dict[str, Any]] = []
