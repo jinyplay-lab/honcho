@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections.abc import AsyncIterator, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
